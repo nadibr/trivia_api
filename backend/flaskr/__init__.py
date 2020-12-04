@@ -1,17 +1,19 @@
-import os
 from flask import Flask, request, abort, jsonify
 # from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS, cross_origin
 import random
+from flasgger import Swagger
 
 from models import setup_db, Question, Category, db
 
-QUESTIONS_PER_PAGE = 10 #also hardcoded in QuestionView.js
+QUESTIONS_PER_PAGE = 10  # also hardcoded in QuestionView.js
 
-def create_app(test_config=None):
+
+def create_app():
 
     app = Flask(__name__)
     setup_db(app)
+    swagger = Swagger(app)
 
     # Set up CORS. Allow '*' for origins
     cors = CORS(app, resources={r"/api/*": {"origins": "*"}})
@@ -23,14 +25,13 @@ def create_app(test_config=None):
         response.headers.add('Access-Control-Allow-Methods', 'GET,PATCH,POST,DELETE,OPTIONS')
         return response
 
-
-
     # endpoint to handle GET requests for all available categories.
     @app.route('/categories', methods=['GET'])
     @cross_origin()
     def get_categories():
+
         categories_query = Category.query.all()
-        categories = {cat.id:cat.type for cat in categories_query}
+        categories = {cat.id: cat.type for cat in categories_query}
 
         if len(categories) == 0:
             abort(404)
@@ -38,14 +39,23 @@ def create_app(test_config=None):
             'categories': categories
         })
 
-
     # endpoint to handle GET requests for questions with pagination
-    @app.route('/questions', methods=['GET'])
-    def get_paginated_categories():
-        # get all the questions from DB
-        all_questions = Question.query.order_by(Question.id).all()
-        # split the questions into pages
-        current_questions = paginate_questions(request, all_questions)
+    @app.route('/questions/<int:page>', methods=['GET'])
+    def get_paginated_questions(page=1):
+
+        current_index = page - 1
+
+        # quesry questions from DB for current page
+        questions = \
+            Question.query.order_by(
+                Question.id
+            ).limit(QUESTIONS_PER_PAGE).offset(current_index * QUESTIONS_PER_PAGE).all()
+
+        # get total number of questions in DB
+        total_questions = Question.query.count()
+
+        current_questions = [question.format() for question in questions]
+
         # get all the categories from DB (required for front end)
         categories_query = Category.query.all()
         # format categories into a dictionary
@@ -57,7 +67,7 @@ def create_app(test_config=None):
 
         return jsonify({
             'questions': current_questions,
-            'total_questions': len(all_questions),
+            'total_questions': total_questions,
             'categories': categories,
             'current_categories': None
         })
@@ -65,6 +75,22 @@ def create_app(test_config=None):
     # endpoint to DELETE question using a question ID
     @app.route('/questions/<question_id>', methods=['DELETE'])
     def delete_question(question_id):
+        """
+        Example endpoint returning a list of colors by palette
+        This is using docstrings for specifications.
+        ---
+        parameters:
+            -   name: question_id
+                in: path
+                type: integer
+                required: true
+                description: Numeric ID of the question to delete
+        responses:
+            200:
+                description: The question with the specified ID deleted.
+
+
+        """
         try:
             question = Question.query.filter_by(id=question_id).first_or_404()
             db.session.delete(question)
@@ -73,7 +99,6 @@ def create_app(test_config=None):
             db.session.rollback()
         finally:
             db.session.close()
-
 
         return jsonify({
             'success': True
@@ -89,7 +114,8 @@ def create_app(test_config=None):
         category = body.get("category")
         difficulty_score = body.get("difficulty")
         try:
-            question = Question(question=question_text, answer=answer_text, category=category, difficulty=difficulty_score)
+            question = Question(question=question_text, answer=answer_text, category=category,
+                                difficulty=difficulty_score)
             db.session.add(question)
             db.session.commit()
         except ValueError:
@@ -110,14 +136,17 @@ def create_app(test_config=None):
         categories_query = Category.query.all()
         categories = {cat.id: cat.type for cat in categories_query}
 
-
         # query all the questions from DB that contain search string in lowercase
         questions = Question.query.filter(Question.question.ilike('%' + f'%{search_string}%' + '%')).all()
-        paginated_questions = paginate_questions(request, questions)
+
+        if len(questions) == 0:
+            abort(404)
+
+        found_questions = [question.format() for question in questions]
 
         return jsonify({
-            'questions': paginated_questions,
-            'total_questions': len(questions),
+            'questions': found_questions,
+            'total_questions': len(found_questions),
             'categories': categories,
             'current_categories': None
         })
@@ -129,6 +158,9 @@ def create_app(test_config=None):
         # query all the questions from DB that have selected category
         questions_query = Question.query.filter_by(category=category_id).all()
         questions = [question.format() for question in questions_query]
+
+        if len(questions) == 0:
+            abort(404)
 
         return jsonify({
             'questions': questions,
@@ -144,22 +176,23 @@ def create_app(test_config=None):
         try:
             # get previous questions and category from front end
             body = request.get_json()
-            #print(body)
+            # print(body)
             previous_questions = body.get('previous_questions', None)
             quiz_category = body.get('quiz_category', None)
 
-            # if category is not selected, get all the questions that were not played before(not in the previous_questions)
+            # if category is not selected, get all the questions that were not played
+            # before(not in the previous_questions)
             if quiz_category['id'] == 0:
                 quiz = Question.query.filter(Question.id.notin_(previous_questions)).all()
             # filter by category
             else:
-                quiz = Question.query.filter(Question.category==quiz_category['id'], \
-                    Question.id.notin_(previous_questions)).all()
+                quiz = Question.query.filter(Question.category == quiz_category['id'],
+                                             Question.id.notin_(previous_questions)).all()
 
-            #format questions into a list of dictionaries
+            # format questions into a list of dictionaries
             unanswered_questions = [question.format() for question in quiz]
 
-            #get a random question
+            # get a random question
             next_question = random.choice(unanswered_questions)
 
             return jsonify({
@@ -178,7 +211,6 @@ def create_app(test_config=None):
             "message": "Not found"
             }), 404
 
-
     @app.errorhandler(400)
     def not_found(error):
         return jsonify({
@@ -186,7 +218,6 @@ def create_app(test_config=None):
             "error": 400,
             "message": "Bad request"
             }), 400
-
 
     @app.errorhandler(422)
     def not_found(error):
@@ -196,16 +227,21 @@ def create_app(test_config=None):
             "message": "Unprocessable"
             }), 422
 
+    # def paginate_questions(request, selection):
+        # page = request.args.get('page', 1, type=int)
+        # print(page)
+        # items_limit = request.args.get('limit', QUESTIONS_PER_PAGE, type=int)
+        # print(items_limit)
+        # start = (page - 1) * QUESTIONS_PER_PAGE
+        # end = start + QUESTIONS_PER_PAGE
+        #
+        # questions = [question.format() for question in selection]
+        # print(questions)
+        # current_questions = questions[start:end]
 
-    def paginate_questions(request, selection):
-        page = request.args.get('page', 1, type=int)
-        start = (page - 1) * QUESTIONS_PER_PAGE
-        end = start + QUESTIONS_PER_PAGE
+        # current_questions = [question.format() for question in questions]
 
-        questions = [question.format() for question in selection]
-        current_questions = questions[start:end]
-
-        return current_questions
+        # return current_questions
 
     return app
 
@@ -213,4 +249,3 @@ def create_app(test_config=None):
 # # run the app
 # if __name__ == '__main__':
 #     app.run(debug=True)
-    

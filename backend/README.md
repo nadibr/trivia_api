@@ -88,6 +88,7 @@ POST '/play'
 
 DELETE '/questions/<question_id>'
 - Deletes a question with specified id
+- Request Arguments: question_id
 - Returns status (success/failure)
 
 ```
